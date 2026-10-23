@@ -1,3 +1,22 @@
+# dependencies
 node_modules/
-dist/
+
+# local settings and secrets
 .env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# logs
+*.log
+npm-debug.log*
+
+# build output and TypeScript cache
+dist/
+build/
+*.tsbuildinfo
+
+# editor folders
+.idea/
