@@ -48,12 +48,17 @@ psql farmer_registry -f db/sample_data.sql
 
 Set the connection with `DATABASE_URL` (see `.env.example`). The default is `postgresql://localhost:5432/farmer_registry`. Do not commit `.env`.
 
-### Satellite baseline data source
+  ### Satellite baseline data source
 
-- Source: JRC Global Forest Cover 2020 (EU Joint Research Centre), a global forest/non-forest map.
-- Why: its 2020 date matches the EU deforestation regulation cutoff (31 Dec 2020), and it covers our West Africa farms.
-- Planned format: the raster (GeoTIFF) is clipped to the study area, converted to forest polygons (for example with QGIS Polygonize), and stored as geometry in EPSG:4326.
-- Current data: a SAMPLE baseline polygon for development. Loading a real JRC tile is planned for a later sprint.
+  - Source: JRC Global Forest Cover 2020 (V4), EU Joint Research Centre. A 10 m forest map, downloaded as 10x10 degree GeoTIFF tiles in WGS84.
+  - Why: its 2020 date matches the EU deforestation regulation cutoff (31 Dec 2020).
+  - Loaded area: tile N10_W10 clipped to a 0.1 degree box (west -2.55, north 6.25, east -2.45, south 6.15). About 7% of it is forest.
+  - Load steps (needs GDAL, `brew install gdal`):
+    1. `gdal_translate -projwin -2.55 6.25 -2.45 6.15 JRC_GFC2020_V4_N10_W10.tif test_box.tif`
+    2. `gdal_polygonize.py test_box.tif -f GeoJSON forest.geojson`
+    3. `ogr2ogr -f PostgreSQL PG:"dbname=farmer_registry" forest.geojson -nln staging_forest -nlt PROMOTE_TO_MULTI -lco GEOMETRY_NAME=geom -t_srs EPSG:4326 -overwrite`
+    4. Merge the forest polygons (`dn = 1`) into `satellite_baseline` with `ST_Union`, then drop `staging_forest`.
+  - Do not commit the tile or the GeoJSON files.
 
 ### Tables
 
@@ -67,12 +72,12 @@ Set the connection with `DATABASE_URL` (see `.env.example`). The default is `pos
 
 `record_flag_audit(...)` saves one audit row. From TypeScript, use `recordFlagAudit` in `src/db/flagAudit.ts`. `auditInputFromComparison` turns a geometry result into an audit entry (`matched` is stored as `Clean`, `flagged` as `Flagged`).
 
-### Known limitations
+  ### Known limitations
 
-- The database holds sample data only.
-- The geometry code expects planar coordinates, while the baseline is stored in lon/lat (EPSG:4326). The coordinate handling is still to be agreed.
-- How a plot finds its baseline (for example a `baseline_id` on `plots`) is not decided yet.
-- Calling the audit function from the compare endpoint, image registration and offline synchronization are not implemented yet.
+  - The baseline covers one small study area only. Plots and farmers are sample data.
+  - The geometry code expects planar coordinates, while the baseline is stored in lon/lat (EPSG:4326). The coordinate handling is still to be agreed.
+  - How a plot finds its baseline (for example a `baseline_id` on `plots`) is not decided yet.
+  - The compare endpoint does not call the audit function yet. Image registration and offline synchronization are not implemented yet.
 
 ## Checks
 
