@@ -13,9 +13,9 @@ SELECT p.plot_id,
 FROM plots p JOIN satellite_baseline b ON b.region_code = p.region_code
 ORDER BY p.plot_id;
 
--- 3. Flag P002 and save the audit entry (009.2). Replace 62.5 with P002's overlap from step 2
+-- 3. Flag P002 and save the audit entry (009.2). Replace 82.08 with P002's overlap from step 2
 UPDATE plots SET status = 'Flagged' WHERE plot_id = 'P002';
-SELECT record_flag_audit('P002', 62.5, 90.0, 'Overlap below 90% threshold', 'Clean', 'Flagged');
+SELECT record_flag_audit('P002', 82.08, 90.0, 'Overlap below 90% threshold', 'Clean', 'Flagged');
 SELECT id, plot_id, overlap_pct, threshold_pct, flag_reason,
        previous_status, new_status, agent_id, created_at
 FROM flag_audit ORDER BY id DESC LIMIT 3;
