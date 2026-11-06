@@ -3,14 +3,14 @@
 
    export type PlotStatus = "Clean" | "Flagged" | "Under Review" | "Cleared" | "Mismatch";
 
-   type Queryable = {
-     query: (text: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+   export type Queryable = {
+    query: (text: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
    };
 
    export interface FlagAuditInput {
      plotId: string;
-     overlapPct: number;   // 0-100
-     thresholdPct: number; // 0-100
+     overlapPct: number | null;   // 0-100, null when not an overlap check
+     thresholdPct: number | null; // 0-100
      reason: string;
      previousStatus: PlotStatus | null;
      newStatus: PlotStatus;

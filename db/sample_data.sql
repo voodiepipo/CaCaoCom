@@ -10,3 +10,9 @@ VALUES (1, 'WA01', '2020-12-31',
 INSERT INTO plots (plot_id, farmer_id, region_code, land_area_ha, boundary) VALUES
 ('P001','F001','WA01',99.0, ST_MakeEnvelope(-2.540358, 6.152992, -2.531358, 6.161992, 4326)),
 ('P002','F002','WA01',99.0, ST_MakeEnvelope(-2.522358, 6.152992, -2.513358, 6.161992, 4326));
+
+INSERT INTO app_user (user_id, full_name, role) VALUES
+('U001', 'Admin User', 'admin'),
+('U002', 'Manager User', 'manager'),
+('A001', 'Field Agent One', 'agent'),
+('A002', 'Field Agent Two', 'agent');

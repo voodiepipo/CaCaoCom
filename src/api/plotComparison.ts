@@ -1,8 +1,8 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer} from "node:http";
 import { comparePlotWithBaseline } from "../application/comparePlot.ts";
 import type { Polygon } from "../geometry/polygonOverlap.ts";
-
-const MAX_BODY_BYTES = 1_000_000;
+import { readJson, sendJson } from "./http.ts";
+import { handlePlotManagementRoute } from "./plotManagement.ts";
 
 type ComparePayload = {
   newPlot: Polygon;
@@ -10,28 +10,11 @@ type ComparePayload = {
   minimumBaselineOverlap?: number;
 };
 
-function sendJson(response: ServerResponse, status: number, value: unknown): void {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  response.end(JSON.stringify(value));
-}
-
 function isPolygon(value: unknown): value is Polygon {
   return Array.isArray(value) && value.length >= 3 && value.every(
     (point) => Array.isArray(point) && point.length === 2 &&
       Number.isFinite(point[0]) && Number.isFinite(point[1]),
   );
-}
-
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new RangeError("Request body exceeds 1 MB");
-    chunks.push(buffer);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
 export function createApiServer() {
@@ -42,6 +25,8 @@ export function createApiServer() {
       sendJson(response, 200, { status: "ok" });
       return;
     }
+
+    if (await handlePlotManagementRoute(request, response, url)) return;
 
     if (request.method !== "POST" || url.pathname !== "/api/plots/compare") {
       sendJson(response, 404, { error: "Route not found" });

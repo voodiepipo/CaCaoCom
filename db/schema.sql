@@ -80,3 +80,56 @@ CREATE OR REPLACE FUNCTION record_flag_audit(
   VALUES (p_plot_id, p_overlap, p_threshold, p_reason, p_prev, p_new, p_agent)
   RETURNING id;
 $$ LANGUAGE sql;
+
+-- Sprint 2: land area, history, users, assignments
+ALTER TABLE plots ADD CONSTRAINT plots_land_area_positive
+  CHECK (land_area_ha IS NULL OR land_area_ha > 0);
+
+-- 3.1: every land area change (append-only, same idea as flag_audit)
+CREATE TABLE plot_area_history (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  plot_id VARCHAR(20) NOT NULL REFERENCES plots(plot_id),
+  previous_area_ha NUMERIC(10,2),
+  new_area_ha NUMERIC(10,2) NOT NULL CHECK (new_area_ha > 0),
+  agent_id VARCHAR(20) NOT NULL DEFAULT 'SYSTEM',
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_area_history_plot ON plot_area_history (plot_id, changed_at);
+
+CREATE FUNCTION plot_area_history_block() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'plot_area_history is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER plot_area_history_no_change
+  BEFORE UPDATE OR DELETE ON plot_area_history
+  FOR EACH ROW EXECUTE FUNCTION plot_area_history_block();
+
+CREATE TRIGGER plot_area_history_no_truncate
+  BEFORE TRUNCATE ON plot_area_history
+  FOR EACH STATEMENT EXECUTE FUNCTION plot_area_history_block();
+
+-- 15.1: users, roles and plot assignments
+CREATE TYPE user_role AS ENUM ('admin', 'manager', 'agent');
+
+CREATE TABLE app_user (
+  user_id VARCHAR(20) PRIMARY KEY,
+  full_name VARCHAR(100) NOT NULL,
+  role user_role NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT true
+);
+
+CREATE TABLE plot_assignment (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  plot_id VARCHAR(20) NOT NULL REFERENCES plots(plot_id),
+  agent_id VARCHAR(20) NOT NULL REFERENCES app_user(user_id),
+  assigned_by VARCHAR(20) NOT NULL REFERENCES app_user(user_id),
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  unassigned_at TIMESTAMPTZ
+);
+-- a plot has at most one current assignee; closed rows stay as history
+CREATE UNIQUE INDEX one_current_assignment_per_plot
+  ON plot_assignment (plot_id) WHERE unassigned_at IS NULL;
+CREATE INDEX idx_assignment_agent
+  ON plot_assignment (agent_id) WHERE unassigned_at IS NULL;
