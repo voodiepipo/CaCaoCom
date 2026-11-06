@@ -4,7 +4,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from "./errors.ts";
 export type UserRole = "admin" | "manager" | "agent";
 
 /** Only these roles may assign plots. */
-const ASSIGNER_ROLES: readonly UserRole[] = ["admin", "manager"];
+const ASSIGNER_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(["admin", "manager"]);
 /** Only conflicted plots can be assigned. */
 export const ASSIGNABLE_STATUSES: readonly PlotStatus[] = ["Flagged", "Mismatch"];
 
@@ -31,20 +31,26 @@ export interface CurrentAssignment {
   assignedAt: string;
 }
 
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  throw new TypeError("Expected a text value from the database");
+}
+
 function requireText(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${name} is required`);
   return value.trim();
 }
 
 const toIso = (value: unknown) =>
-  (value instanceof Date ? value : new Date(String(value))).toISOString();
+  (value instanceof Date ? value : new Date(asText(value))).toISOString();
 
 /** Active field agents, for the assignment dropdown. */
 export async function listActiveAgents(db: Queryable): Promise<Array<{ userId: string; fullName: string }>> {
   const { rows } = await db.query(
     "SELECT user_id, full_name FROM app_user WHERE role = 'agent' AND active ORDER BY full_name",
   );
-  return rows.map((row) => ({ userId: String(row.user_id), fullName: String(row.full_name) }));
+  return rows.map((row) => ({ userId: asText(row.user_id), fullName: asText(row.full_name) }));
 }
 
 export async function getCurrentAssignment(db: Queryable, plotId: string): Promise<CurrentAssignment | null> {
@@ -57,9 +63,9 @@ export async function getCurrentAssignment(db: Queryable, plotId: string): Promi
   if (rows.length === 0) return null;
   return {
     plotId,
-    agentId: String(rows[0].agent_id),
-    agentName: String(rows[0].full_name),
-    assignedBy: String(rows[0].assigned_by),
+    agentId: asText(rows[0].agent_id),
+    agentName: asText(rows[0].full_name),
+    assignedBy: asText(rows[0].assigned_by),
     assignedAt: toIso(rows[0].assigned_at),
   };
 }
@@ -76,7 +82,7 @@ export async function assignPlot(db: Queryable, input: AssignPlotInput): Promise
   const actor = await db.query("SELECT role, active FROM app_user WHERE user_id = $1", [actorId]);
   if (
     actor.rows.length === 0 || !actor.rows[0].active ||
-    !ASSIGNER_ROLES.includes(actor.rows[0].role as UserRole)
+    !ASSIGNER_ROLES.has(actor.rows[0].role as UserRole)
   ) {
     throw new ForbiddenError("Only an active admin or manager can assign plots");
   }
@@ -100,12 +106,12 @@ export async function assignPlot(db: Queryable, input: AssignPlotInput): Promise
       WHERE plot_id = $1 AND unassigned_at IS NULL FOR UPDATE`,
     [plotId],
   );
-  const previousAgentId = current.rows.length > 0 ? String(current.rows[0].agent_id) : null;
+  const previousAgentId = current.rows.length > 0 ? asText(current.rows[0].agent_id) : null;
 
   if (previousAgentId === agentId) {
     return {
       plotId, agentId,
-      assignedBy: String(current.rows[0].assigned_by),
+      assignedBy: asText(current.rows[0].assigned_by),
       assignedAt: toIso(current.rows[0].assigned_at),
       previousAgentId, changed: false,
     };

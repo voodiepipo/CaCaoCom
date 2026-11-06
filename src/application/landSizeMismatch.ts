@@ -34,7 +34,9 @@ export function areaTolerancePct(): number {
 
 /** Variance of the measured (new) area against the recorded (legacy) area, in percent. */
 export function areaVariancePct(measuredHa: number, recordedHa: number): number {
-  if (!(recordedHa > 0)) throw new RangeError("recordedHa must be greater than 0");
+  if (Number.isNaN(recordedHa) || recordedHa <= 0) {
+    throw new RangeError("recordedHa must be greater than 0");
+  }
   return (Math.abs(measuredHa - recordedHa) / recordedHa) * 100;
 }
 

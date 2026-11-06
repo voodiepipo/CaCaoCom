@@ -4,7 +4,7 @@ import { pool } from "../../src/db/pool.ts";
 import { NotFoundError } from "../../src/application/errors.ts";
 import { areaVariancePct, decideMismatchStatus } from "../../src/application/landSizeMismatch.ts";
 import { parseLandAreaHa, updateLandArea } from "../../src/application/updateLandArea.ts";
-import { PoolClient } from "pg";
+import type { PoolClient } from "pg";
 
 const skip = process.env.RUN_DB_TESTS ? false : "set RUN_DB_TESTS=1 with PostgreSQL running";
 
