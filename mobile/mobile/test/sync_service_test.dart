@@ -70,15 +70,31 @@ void main() {
     final sync = service((req) async {
       final farmer = (jsonDecode(req.body) as Map)['farmer_id'];
       return farmer == 5
-          ? http.Response(jsonEncode({'detail': 'Farmer 5 not found'}), 404)
+          ? http.Response(jsonEncode({'detail': 'Plot area exceeds the allowed maximum'}), 422)
           : http.Response(jsonEncode({'id': 7, 'status': 'CLEAN', 'overlap_percent': 0.0}), 201);
     });
 
     await sync.syncNow();
-    expect(sync.lastError, contains('Farmer 5 not found'));
+    expect(sync.lastError, contains('exceeds the allowed maximum'));
     expect((await repo.findPlot('AG-017-1'))!.syncStatus, SyncStatus.pendingSync);
     expect((await repo.findPlot('AG-017-2'))!.syncStatus, SyncStatus.synced);
     expect(sync.pending, 1);
+  });
+
+  test('unknown farmer is created on the server and the plot syncs under its server ID', () async {
+    await repo.saveNewPlot(plot('AG-017-1', farmer: 'F-009'));
+    final sync = service((req) async {
+      if (req.url.path == '/farmers') return http.Response(jsonEncode({'id': 10}), 201);
+      return (jsonDecode(req.body) as Map)['farmer_id'] == 10
+          ? http.Response(jsonEncode({'id': 42, 'status': 'CLEAN', 'overlap_percent': 0.0}), 201)
+          : http.Response(jsonEncode({'detail': 'Farmer 9 not found'}), 404);
+    });
+
+    await sync.syncNow();
+    expect(sync.lastError, isNull);
+    final saved = (await repo.allPlots()).single;
+    expect(saved.syncStatus, SyncStatus.synced);
+    expect(saved.farmerId, 'F-010');
   });
 
   test('does nothing while offline', () async {

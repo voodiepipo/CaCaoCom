@@ -306,12 +306,46 @@ void main() {
 
     test('a 4xx response rejects just this plot, with the server detail', () async {
       final uploader = HttpPlotUploader(
-        client: MockClient((_) async => http.Response(jsonEncode({'detail': 'Farmer 5 not found'}), 404)),
+        client: MockClient((_) async => http.Response(jsonEncode({'detail': 'Plot area exceeds the allowed maximum'}), 422)),
       );
       expect(
         () => uploader.upload(plot('5')),
-        throwsA(isA<PlotRejected>().having((e) => e.message, 'message', contains('Farmer 5 not found'))),
+        throwsA(isA<PlotRejected>().having((e) => e.message, 'message', contains('exceeds the allowed maximum'))),
       );
+    });
+
+    test('an unknown farmer is created, then the plot is sent again', () async {
+      final sent = <(String, Map)>[];
+      var plots = 0;
+      final uploader = HttpPlotUploader(
+        baseUrl: 'http://api.test/api/v1',
+        client: MockClient((req) async {
+          sent.add((req.url.path, jsonDecode(req.body) as Map));
+          if (req.url.path.endsWith('/farmers')) return http.Response(jsonEncode({'id': 5}), 201);
+          return plots++ == 0
+              ? http.Response(jsonEncode({'detail': 'Farmer 5 not found'}), 404)
+              : http.Response(jsonEncode({'id': 42, 'status': 'CLEAN', 'overlap_percent': 0.0}), 201);
+        }),
+      );
+      final check = await uploader.upload(plot('5'));
+
+      expect(sent.map((s) => s.$1), ['/api/v1/plots', '/api/v1/farmers', '/api/v1/plots']);
+      expect(sent[1].$2['region'], 'WA01');
+      expect(sent[2].$2['farmer_id'], 5);
+      expect(check.serverId, 42);
+      expect(check.farmerId, isNull, reason: 'server kept the same ID, nothing to rewrite');
+    });
+
+    test('a created farmer with a different server ID is reported back', () async {
+      final uploader = HttpPlotUploader(
+        client: MockClient((req) async {
+          if (req.url.path.endsWith('/farmers')) return http.Response(jsonEncode({'id': 12}), 201);
+          return (jsonDecode(req.body) as Map)['farmer_id'] == 12
+              ? http.Response(jsonEncode({'id': 42, 'status': 'CLEAN'}), 201)
+              : http.Response(jsonEncode({'detail': 'Farmer 5 not found'}), 404);
+        }),
+      );
+      expect((await uploader.upload(plot('5'))).farmerId, 'F-012');
     });
 
     test('a farmer ID with no number is rejected without calling the server', () async {

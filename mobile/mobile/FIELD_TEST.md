@@ -26,11 +26,14 @@ Device: ______  Android version: ______  Tester: ______  Date: ______  Location:
 
 ## Reconnect and sync (007)
 
-Run the API where the phone can reach it, and build with `--dart-define=API_BASE_URL=http://<laptop-ip>:3000`.
+Start the backend on a laptop on the same Wi-Fi (`docker compose up --build` in `backend/`), and build with `--dart-define=API_BASE_URL=http://<laptop-ip>:8000/api/v1`. To get a server Clean/Flagged result, upload a `WA01` baseline first (`POST /api/v1/baselines`).
 
 - [ ] Turn off airplane mode. Within a few seconds the bar shows **Uploading…**, then **All plots uploaded · hh:mm**, with no tap needed.
-- [ ] Each plot shows **Synced** and a **Synced at** time, and has a `synced` history entry.
-- [ ] Check on the server that each plot arrived exactly once.
+- [ ] Each plot shows **Synced** and a **Synced at** time, and has a `synced` history entry with the server plot number.
+- [ ] Check on the server that each plot arrived exactly once (`GET /api/v1/plots`).
+- [ ] With a `WA01` baseline: the plot's result comes from the server check. Without one: the device result is kept (server says `PENDING_CHECK`).
+- [ ] Save a plot with a farmer ID that is not on the server yet, for example `F-999`. It still uploads, because the farmer is created.
+- [ ] Save a plot with a farmer ID that has no number, for example `ABC`. That plot stays **Pending sync** with the reason shown under the sync bar, and the other plots still upload.
 
 ## Intermittent signal
 
@@ -38,7 +41,7 @@ Run the API where the phone can reach it, and build with `--dart-define=API_BASE
 - [ ] No plot is lost: synced + pending = 5.
 - [ ] Turn airplane mode off again. The rest upload. Still exactly 5 plots on the server, no duplicates.
 - [ ] Walk to an area with weak signal (1 bar / EDGE). Note whether uploads finish or the bar shows `last try failed`. If it fails, tap **Sync now** when signal is better.
-- [ ] Stop the API server and tap **Sync now**: the bar shows `last try failed` and plots stay **Pending sync**.
+- [ ] Stop the API server (`docker compose stop api`) and tap **Sync now**: the bar shows `last try failed` with a network error, and plots stay **Pending sync**.
 
 ## Battery / performance (note values)
 

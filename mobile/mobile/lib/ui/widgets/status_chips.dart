@@ -90,7 +90,15 @@ class SyncStatusBar extends StatelessWidget {
                 ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: color))
                 : Icon(icon, size: 16, color: color),
             const SizedBox(width: 8),
-            Expanded(child: Text(text, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600))),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(text, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+                // Say why, so the agent can tell "server down" from "plot rejected".
+                if (!sync.syncing && sync.pending > 0 && sync.lastError != null)
+                  Text(sync.lastError!,
+                      maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: color, fontSize: 11)),
+              ]),
+            ),
             TextButton(
               onPressed: sync.syncing || sync.pending == 0 || !online.value ? null : sync.syncNow,
               child: const Text('Sync now'),

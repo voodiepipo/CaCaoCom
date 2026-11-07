@@ -20,10 +20,14 @@ class PlotRejected extends UploadFailed {
 
 /// What the server's overlap check said about an uploaded plot.
 class ServerCheck {
-  const ServerCheck({required this.serverId, required this.status, this.overlapPct});
+  const ServerCheck({required this.serverId, required this.status, this.overlapPct, this.farmerId});
   final Object? serverId;
   final String? status;
   final double? overlapPct;
+
+  /// Set when the farmer was created during upload and got a different
+  /// server ID than the one typed on the phone; the local record takes it.
+  final String? farmerId;
 
   /// The server check is authoritative once a baseline exists for the region.
   CheckStatus? get checkStatus => switch (status) {
@@ -45,10 +49,12 @@ const apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://
 class HttpPlotUploader implements PlotUploader {
   HttpPlotUploader({http.Client? client, String baseUrl = apiBaseUrl, this.timeout = const Duration(seconds: 20)})
       : _client = client ?? http.Client(),
-        _endpoint = Uri.parse('$baseUrl/plots');
+        _endpoint = Uri.parse('$baseUrl/plots'),
+        _farmersEndpoint = Uri.parse('$baseUrl/farmers');
 
   final http.Client _client;
   final Uri _endpoint;
+  final Uri _farmersEndpoint;
   final Duration timeout;
 
   @override
@@ -56,28 +62,52 @@ class HttpPlotUploader implements PlotUploader {
     final farmerId = int.tryParse(plot.farmerId.replaceAll(RegExp(r'\D'), ''));
     if (farmerId == null) throw PlotRejected('${plot.plotCode}: farmer ID "${plot.farmerId}" has no number');
 
-    final http.Response res;
-    try {
-      res = await _client
-          .post(_endpoint, headers: {'content-type': 'application/json'}, body: jsonEncode(uploadBody(plot, farmerId)))
-          .timeout(timeout);
-    } catch (e) {
-      throw UploadFailed('Network error: $e');
+    var res = await _post(_endpoint, uploadBody(plot, farmerId));
+    // Farmers aren't managed on the phone yet, so a new farmer ID is normal:
+    // create the farmer and send the plot again.
+    String? newFarmerId;
+    if (res.statusCode == 404 && _isFarmerMissing(res.body)) {
+      final serverFarmerId = await _createFarmer(plot);
+      if (serverFarmerId != farmerId) newFarmerId = 'F-${serverFarmerId.toString().padLeft(3, '0')}';
+      res = await _post(_endpoint, uploadBody(plot, serverFarmerId));
     }
-    if (res.statusCode >= 400 && res.statusCode < 500) {
-      throw PlotRejected('${plot.plotCode}: server said ${res.statusCode}: ${_detail(res.body)}');
-    }
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw UploadFailed('Server returned ${res.statusCode}');
-    }
+    _check(res, plot);
 
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return ServerCheck(
       serverId: body['id'],
       status: body['status'] as String?,
       overlapPct: (body['overlap_percent'] as num?)?.toDouble(),
+      farmerId: newFarmerId,
     );
   }
+
+  Future<int> _createFarmer(PlotRecord plot) async {
+    final res = await _post(_farmersEndpoint, {'full_name': 'Farmer ${plot.farmerId}', 'region': plot.regionCode});
+    _check(res, plot);
+    return (jsonDecode(res.body) as Map)['id'] as int;
+  }
+
+  Future<http.Response> _post(Uri url, Map<String, Object?> body) async {
+    try {
+      return await _client
+          .post(url, headers: {'content-type': 'application/json'}, body: jsonEncode(body))
+          .timeout(timeout);
+    } catch (e) {
+      throw UploadFailed('Network error: $e');
+    }
+  }
+
+  void _check(http.Response res, PlotRecord plot) {
+    if (res.statusCode >= 400 && res.statusCode < 500) {
+      throw PlotRejected('${plot.plotCode}: server said ${res.statusCode}: ${_detail(res.body)}');
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw UploadFailed('Server returned ${res.statusCode}');
+    }
+  }
+
+  static bool _isFarmerMissing(String body) => RegExp(r'^Farmer \d+ not found$').hasMatch(_detail(body));
 
   static String _detail(String body) {
     try {

@@ -148,6 +148,7 @@ class PlotRepository {
         {
           'sync_status': SyncStatus.synced.name,
           'synced_at': when,
+          if (check?.farmerId != null) 'farmer_id': check!.farmerId,
           if (serverStatus != null) ...{
             'check_status': serverStatus.name,
             'overlap_pct': check!.overlapPct,
