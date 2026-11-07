@@ -25,11 +25,12 @@ class FakeUploader implements PlotUploader {
   Completer<void>? gate;
 
   @override
-  Future<void> upload(PlotRecord plot) async {
+  Future<ServerCheck?> upload(PlotRecord plot) async {
     final call = ++calls;
     if (gate != null) await gate!.future;
     if (failWhen(call, plot)) throw const UploadFailed('Network error: connection reset');
     uploaded.add((plot.localId, plot.revision));
+    return null;
   }
 }
 
@@ -278,35 +279,64 @@ void main() {
   });
 
   group('007 HTTP uploader', () {
-    test('posts the plot as JSON to /api/plots/sync', () async {
+    test('posts the plot as GeoJSON to /plots and returns the server check', () async {
       late http.Request sent;
       final uploader = HttpPlotUploader(
-        baseUrl: 'http://api.test',
+        baseUrl: 'http://api.test/api/v1',
         client: MockClient((req) async {
           sent = req;
-          return http.Response('{"status":"ok"}', 201);
+          return http.Response(jsonEncode({'id': 42, 'status': 'FLAGGED', 'overlap_percent': 40.0}), 201);
         }),
       );
-      await uploader.upload(plot('a').copyWith(landAreaHa: 5.5, revision: 2));
+      final check = await uploader.upload(plot('5'));
 
       expect(sent.method, 'POST');
-      expect(sent.url.toString(), 'http://api.test/api/plots/sync');
+      expect(sent.url.toString(), 'http://api.test/api/v1/plots');
       final body = jsonDecode(sent.body) as Map<String, Object?>;
-      expect(body['localId'], 'a');
-      expect(body['revision'], 2);
-      expect(body['agentId'], 'AG-017');
-      expect(body['landAreaHa'], 5.5);
-      expect((body['points'] as List).length, 3);
+      expect(body['client_id'], clientIdFor('5'));
+      expect(body['farmer_id'], 5);
+      expect(body['captured_by_agent_id'], 'AG-017');
+      final ring = (body['boundary'] as Map)['coordinates'][0] as List;
+      expect(ring.first, [-2.54, 6.15]);
+      expect(ring.last, ring.first);
+      expect(check.serverId, 42);
+      expect(check.checkStatus, CheckStatus.flagged);
+      expect(check.overlapPct, 40.0);
+    });
+
+    test('a 4xx response rejects just this plot, with the server detail', () async {
+      final uploader = HttpPlotUploader(
+        client: MockClient((_) async => http.Response(jsonEncode({'detail': 'Farmer 5 not found'}), 404)),
+      );
+      expect(
+        () => uploader.upload(plot('5')),
+        throwsA(isA<PlotRejected>().having((e) => e.message, 'message', contains('Farmer 5 not found'))),
+      );
+    });
+
+    test('a farmer ID with no number is rejected without calling the server', () async {
+      var calls = 0;
+      final uploader = HttpPlotUploader(client: MockClient((_) async {
+        calls++;
+        return http.Response('{}', 201);
+      }));
+      await expectLater(() => uploader.upload(plot('x')), throwsA(isA<PlotRejected>()));
+      expect(calls, 0);
+    });
+
+    test('client_id is stable so retries are idempotent', () {
+      expect(clientIdFor('AG-017-1'), clientIdFor('AG-017-1'));
+      expect(clientIdFor('AG-017-1'), isNot(clientIdFor('AG-017-2')));
     });
 
     test('a non-2xx response throws so the plot stays queued', () async {
       final uploader = HttpPlotUploader(client: MockClient((_) async => http.Response('down', 503)));
-      expect(() => uploader.upload(plot('a')), throwsA(isA<UploadFailed>()));
+      expect(() => uploader.upload(plot('5')), throwsA(isA<UploadFailed>()));
     });
 
     test('a network error throws UploadFailed', () async {
       final uploader = HttpPlotUploader(client: MockClient((_) async => throw http.ClientException('no route')));
-      expect(() => uploader.upload(plot('a')), throwsA(isA<UploadFailed>()));
+      expect(() => uploader.upload(plot('5')), throwsA(isA<UploadFailed>()));
     });
   });
 }

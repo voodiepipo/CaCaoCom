@@ -9,9 +9,10 @@ import 'plot_uploader.dart';
 /// Story 007: uploads queued plots in the background whenever the phone is
 /// online — at start-up, on every reconnect, or when the agent taps Sync now.
 ///
-/// Plots go one at a time, oldest first. A failure stops the run and leaves
-/// that plot and the rest queued for the next trigger; nothing is removed
-/// from the device.
+/// Plots go one at a time, oldest first. A network or server failure stops
+/// the run and leaves that plot and the rest queued for the next trigger; a
+/// plot the server rejects is skipped for this run. Nothing is removed from
+/// the device.
 class SyncService extends ChangeNotifier {
   SyncService({required this.repo, required this.uploader, required this.connectivity});
 
@@ -52,14 +53,21 @@ class SyncService extends ChangeNotifier {
 
   Future<void> _run() async {
     lastError = null;
+    // Plots the server rejected this run; they stay queued for the next one.
+    final rejected = <String>{};
     try {
       // Re-read the queue each time so plots saved mid-run are picked up.
       while (connectivity.value) {
-        final queue = await repo.pendingPlots();
+        final queue = (await repo.pendingPlots()).where((p) => !rejected.contains(p.localId));
         if (queue.isEmpty) break;
         final plot = queue.first;
-        await uploader.upload(plot);
-        if (await repo.markSynced(plot)) lastSyncedAt = DateTime.now();
+        try {
+          final check = await uploader.upload(plot);
+          if (await repo.markSynced(plot, check: check)) lastSyncedAt = DateTime.now();
+        } on PlotRejected catch (e) {
+          rejected.add(plot.localId);
+          lastError = '$e';
+        }
         await refreshPending();
       }
     } catch (e) {

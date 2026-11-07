@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 
 import '../models/plot_record.dart';
 
@@ -11,58 +12,97 @@ class UploadFailed implements Exception {
   String toString() => message;
 }
 
-/// Sends one plot to the server. Throws on any failure so the plot stays queued.
-abstract class PlotUploader {
-  Future<void> upload(PlotRecord plot);
+/// The server rejected this one plot (bad data, unknown farmer). Retrying
+/// won't help, but the rest of the queue can still go up.
+class PlotRejected extends UploadFailed {
+  const PlotRejected(super.message);
 }
 
-/// Server address; override with `--dart-define=API_BASE_URL=https://…`.
-/// The default reaches `npm start` on the host from the Android emulator.
-const apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:3000');
+/// What the server's overlap check said about an uploaded plot.
+class ServerCheck {
+  const ServerCheck({required this.serverId, required this.status, this.overlapPct});
+  final Object? serverId;
+  final String? status;
+  final double? overlapPct;
+
+  /// The server check is authoritative once a baseline exists for the region.
+  CheckStatus? get checkStatus => switch (status) {
+        'CLEAN' => CheckStatus.clean,
+        'FLAGGED' => CheckStatus.flagged,
+        _ => null,
+      };
+}
+
+/// Sends one plot to the server. Throws on any failure so the plot stays queued.
+abstract class PlotUploader {
+  Future<ServerCheck?> upload(PlotRecord plot);
+}
+
+/// Server address; override with `--dart-define=API_BASE_URL=https://…/api/v1`.
+/// The default reaches the FastAPI backend on the host from the Android emulator.
+const apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:8000/api/v1');
 
 class HttpPlotUploader implements PlotUploader {
   HttpPlotUploader({http.Client? client, String baseUrl = apiBaseUrl, this.timeout = const Duration(seconds: 20)})
       : _client = client ?? http.Client(),
-        _endpoint = Uri.parse('$baseUrl/api/plots/sync');
+        _endpoint = Uri.parse('$baseUrl/plots');
 
   final http.Client _client;
   final Uri _endpoint;
   final Duration timeout;
 
   @override
-  Future<void> upload(PlotRecord plot) async {
+  Future<ServerCheck> upload(PlotRecord plot) async {
+    final farmerId = int.tryParse(plot.farmerId.replaceAll(RegExp(r'\D'), ''));
+    if (farmerId == null) throw PlotRejected('${plot.plotCode}: farmer ID "${plot.farmerId}" has no number');
+
     final http.Response res;
     try {
       res = await _client
-          .post(_endpoint, headers: {'content-type': 'application/json'}, body: jsonEncode(toSyncJson(plot)))
+          .post(_endpoint, headers: {'content-type': 'application/json'}, body: jsonEncode(uploadBody(plot, farmerId)))
           .timeout(timeout);
     } catch (e) {
       throw UploadFailed('Network error: $e');
     }
+    if (res.statusCode >= 400 && res.statusCode < 500) {
+      throw PlotRejected('${plot.plotCode}: server said ${res.statusCode}: ${_detail(res.body)}');
+    }
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw UploadFailed('Server returned ${res.statusCode}');
+    }
+
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    return ServerCheck(
+      serverId: body['id'],
+      status: body['status'] as String?,
+      overlapPct: (body['overlap_percent'] as num?)?.toDouble(),
+    );
+  }
+
+  static String _detail(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map)['detail'];
+      return detail is String ? detail : jsonEncode(detail);
+    } catch (_) {
+      return body;
     }
   }
 }
 
-/// Body of `POST /api/plots/sync`. `localId` + `revision` identify the
-/// version, so the server can recognise a repeated upload.
-Map<String, Object?> toSyncJson(PlotRecord plot) => {
-      'localId': plot.localId,
-      'revision': plot.revision,
-      'plotCode': plot.plotCode,
-      'farmerId': plot.farmerId,
-      'regionCode': plot.regionCode,
-      'agentId': plot.agentId,
-      'createdAt': plot.createdAt.toUtc().toIso8601String(),
-      'points': plot.points.map((p) => p.toJson()).toList(),
-      'mappedAreaHa': plot.areaHa,
-      'landAreaHa': plot.landAreaHa,
-      'deviceCheck': {
-        'status': plot.checkStatus.name,
-        'overlapPct': plot.overlapPct,
-        'thresholdPct': plot.thresholdPct,
-        'reason': plot.checkReason,
-        'checkedAt': plot.checkedAt?.toUtc().toIso8601String(),
-      },
-    };
+/// Body of `POST /plots`. GeoJSON wants [lon, lat] and a closed ring.
+Map<String, Object?> uploadBody(PlotRecord plot, int farmerId) {
+  final ring = [for (final p in plot.points) [p.longitude, p.latitude]];
+  if (ring.isNotEmpty) ring.add(ring.first);
+  return {
+    'client_id': clientIdFor(plot.localId),
+    'farmer_id': farmerId,
+    'region': plot.regionCode,
+    'boundary': {'type': 'Polygon', 'coordinates': [ring]},
+    'captured_by_agent_id': plot.agentId,
+    'captured_at': plot.createdAt.toUtc().toIso8601String(),
+  };
+}
+
+/// Stable UUID for a local plot ID, so re-uploads hit the same server row
+/// (the server dedupes on `client_id`).
+String clientIdFor(String localId) => const Uuid().v5(Namespace.url.value, 'cacaocom:plot:$localId');

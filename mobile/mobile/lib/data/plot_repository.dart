@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../models/plot_record.dart';
+import '../services/plot_uploader.dart';
 
 /// Device storage for mapped plots (story 005). Everything is written to a
 /// local SQLite file, so capture works with no signal; records stay
@@ -136,12 +137,24 @@ class PlotRepository {
 
   /// Marks [uploaded] as synced, unless it was edited on the device while the
   /// upload was in flight. Returns false in that case so it stays queued.
-  Future<bool> markSynced(PlotRecord uploaded, {DateTime? at}) async {
+  /// [check] is the server's overlap result; when it has a verdict it
+  /// replaces the on-device check.
+  Future<bool> markSynced(PlotRecord uploaded, {DateTime? at, ServerCheck? check}) async {
     final when = (at ?? DateTime.now()).toUtc().toIso8601String();
+    final serverStatus = check?.checkStatus;
     return _db.transaction((txn) async {
       final n = await txn.update(
         'plots',
-        {'sync_status': SyncStatus.synced.name, 'synced_at': when},
+        {
+          'sync_status': SyncStatus.synced.name,
+          'synced_at': when,
+          if (serverStatus != null) ...{
+            'check_status': serverStatus.name,
+            'overlap_pct': check!.overlapPct,
+            'check_reason': 'Server check: overlap ${check.overlapPct?.toStringAsFixed(1)}% → ${check.status}',
+            'checked_at': when,
+          },
+        },
         where: 'local_id = ? AND revision = ?',
         whereArgs: [uploaded.localId, uploaded.revision],
       );
@@ -151,7 +164,7 @@ class PlotRepository {
         'action': 'synced',
         'agent_id': uploaded.agentId,
         'at': when,
-        'detail': 'Uploaded to server',
+        'detail': check == null ? 'Uploaded to server' : 'Uploaded: server plot #${check.serverId}, status ${check.status}',
       });
       return true;
     });

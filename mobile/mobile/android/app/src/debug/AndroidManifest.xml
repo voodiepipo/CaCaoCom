@@ -5,6 +5,6 @@
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Debug only: lets the sync job reach the local API over plain http
-         (http://10.0.2.2:3000). Release builds must use https. -->
+         (http://10.0.2.2:8000). Release builds must use https. -->
     <application android:usesCleartextTraffic="true"/>
 </manifest>
