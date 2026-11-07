@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -21,7 +23,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    widget.services.sync.addListener(_reload);
     _reload();
+  }
+
+  @override
+  void dispose() {
+    widget.services.sync.removeListener(_reload);
+    super.dispose();
   }
 
   Future<void> _reload() async {
@@ -33,7 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => CaptureScreen(services: widget.services)),
     );
-    _reload();
+    await widget.services.sync.refreshPending();
+    unawaited(widget.services.sync.syncNow());
   }
 
   Future<void> _signOut() async {
@@ -58,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(children: [
         ConnectivityBanner(online: widget.services.connectivity),
+        SyncStatusBar(sync: widget.services.sync, online: widget.services.connectivity),
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(children: [
@@ -78,13 +89,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       leading: const Icon(Icons.crop_square, color: cocoa),
                       title: Text('${p.plotCode} · Farmer ${p.farmerId}'),
                       subtitle: Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                        Text('${p.areaHa.toStringAsFixed(2)} ha · ${p.points.length} pts'),
+                        Text('${p.effectiveLandAreaHa.toStringAsFixed(2)} ha · ${p.points.length} pts'),
                         syncChip(p.syncStatus),
                         checkChip(p.checkStatus),
                       ]),
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => PlotDetailScreen(services: widget.services, plot: p),
-                      )),
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(
+                            builder: (_) => PlotDetailScreen(services: widget.services, plot: p),
+                          ))
+                          .then((_) => _reload()),
                     );
                   },
                 ),

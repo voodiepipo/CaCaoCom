@@ -62,6 +62,9 @@ class PlotRecord {
     this.thresholdPct,
     this.checkReason,
     this.checkedAt,
+    this.landAreaHa,
+    this.revision = 0,
+    this.syncedAt,
   });
 
   final String localId;
@@ -79,6 +82,17 @@ class PlotRecord {
   final String? checkReason;
   final DateTime? checkedAt;
 
+  /// Land area as entered by the agent (story 3.1); may differ from the
+  /// mapped [areaHa]. Null means the mapped area is used.
+  final double? landAreaHa;
+
+  /// Bumped on every local edit, so an upload that raced an edit does not
+  /// mark the newer version as synced.
+  final int revision;
+  final DateTime? syncedAt;
+
+  double get effectiveLandAreaHa => landAreaHa ?? areaHa;
+
   List<LatLng> get ring => points.map((p) => p.latLng).toList();
 
   PlotRecord copyWith({
@@ -88,6 +102,9 @@ class PlotRecord {
     double? thresholdPct,
     String? checkReason,
     DateTime? checkedAt,
+    double? landAreaHa,
+    int? revision,
+    DateTime? syncedAt,
   }) =>
       PlotRecord(
         localId: localId,
@@ -104,6 +121,9 @@ class PlotRecord {
         thresholdPct: thresholdPct ?? this.thresholdPct,
         checkReason: checkReason ?? this.checkReason,
         checkedAt: checkedAt ?? this.checkedAt,
+        landAreaHa: landAreaHa ?? this.landAreaHa,
+        revision: revision ?? this.revision,
+        syncedAt: syncedAt ?? this.syncedAt,
       );
 
   Map<String, Object?> toRow() => {
@@ -121,6 +141,9 @@ class PlotRecord {
         'threshold_pct': thresholdPct,
         'check_reason': checkReason,
         'checked_at': checkedAt?.toUtc().toIso8601String(),
+        'land_area_ha': landAreaHa,
+        'revision': revision,
+        'synced_at': syncedAt?.toUtc().toIso8601String(),
       };
 
   factory PlotRecord.fromRow(Map<String, Object?> row) => PlotRecord(
@@ -140,6 +163,9 @@ class PlotRecord {
         thresholdPct: (row['threshold_pct'] as num?)?.toDouble(),
         checkReason: row['check_reason'] as String?,
         checkedAt: row['checked_at'] == null ? null : DateTime.parse(row['checked_at'] as String),
+        landAreaHa: (row['land_area_ha'] as num?)?.toDouble(),
+        revision: (row['revision'] as int?) ?? 0,
+        syncedAt: row['synced_at'] == null ? null : DateTime.parse(row['synced_at'] as String),
       );
 }
 

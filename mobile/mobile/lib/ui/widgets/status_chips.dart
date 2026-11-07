@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/plot_record.dart';
+import '../../services/sync_service.dart';
 
 Widget _chip(String label, Color color, IconData icon) => Chip(
       avatar: Icon(icon, size: 16, color: color),
@@ -42,6 +43,61 @@ class ConnectivityBanner extends StatelessWidget {
           ),
         ]),
       ),
+    );
+  }
+}
+
+/// Story 005/007: how many plots are still only on this phone, and whether
+/// they are being uploaded right now.
+class SyncStatusBar extends StatelessWidget {
+  const SyncStatusBar({super.key, required this.sync, required this.online});
+  final SyncService sync;
+  final ValueNotifier<bool> online;
+
+  String _time(DateTime t) => t.toLocal().toString().substring(11, 16);
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([sync, online]),
+      builder: (context, _) {
+        final (icon, color, text) = switch (sync) {
+          SyncService(syncing: true) => (Icons.sync, Colors.blue.shade700, 'Uploading ${sync.pending} plot(s)…'),
+          SyncService(pending: 0) => (
+              Icons.cloud_done_outlined,
+              Colors.blue.shade700,
+              sync.lastSyncedAt == null ? 'All plots uploaded' : 'All plots uploaded · ${_time(sync.lastSyncedAt!)}'
+            ),
+          _ when !online.value => (
+              Icons.cloud_off_outlined,
+              Colors.orange.shade800,
+              '${sync.pending} plot(s) pending sync — will upload when online'
+            ),
+          _ => (
+              Icons.cloud_upload_outlined,
+              Colors.orange.shade800,
+              sync.lastError == null
+                  ? '${sync.pending} plot(s) pending sync'
+                  : '${sync.pending} plot(s) pending sync — last try failed'
+            ),
+        };
+        return Container(
+          width: double.infinity,
+          color: color.withValues(alpha: 0.10),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(children: [
+            sync.syncing
+                ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: color))
+                : Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(child: Text(text, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600))),
+            TextButton(
+              onPressed: sync.syncing || sync.pending == 0 || !online.value ? null : sync.syncNow,
+              child: const Text('Sync now'),
+            ),
+          ]),
+        );
+      },
     );
   }
 }

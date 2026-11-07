@@ -7,7 +7,15 @@ Flutter app for field agents. Sprint 1 stories on the device:
 - **009.2 Flag rule**: overlap below 90% gives **Flagged**, otherwise **Clean**.
 - Every save writes an append-only history entry with agent ID and timestamp.
 
-Upload to the server (story 007) is Sprint 2.
+## Sprint 2 (mobile)
+
+- **007 Auto-sync**: `ConnectivityService` fires `reconnected` when the phone goes from no network to some network; `SyncService` then uploads queued plots one by one, oldest first, to `POST {API_BASE_URL}/api/plots/sync`. It also runs at start-up and from **Sync now** on the home screen. A failed upload stops the run and leaves the remaining plots **Pending sync** for the next try. Each plot has a `revision`, so a plot edited while its upload is in flight stays queued and the newer version is sent.
+- **005 Pending sync status**: the home screen shows how many plots are only on the phone, whether they are uploading, and when the last one was sent. The plot screen shows **Synced at**.
+- **3.1 Land area**: the save form has a land area field, filled in with the mapped area. On the plot screen, the pencil icon changes it. Every change adds a `land_area_updated` history entry (old → new, agent ID) and queues the plot for upload again.
+
+Server address: `flutter run --dart-define=API_BASE_URL=http://<host>:3000`. The default is `http://10.0.2.2:3000`, which reaches the host machine from the Android emulator. The server does not have `/api/plots/sync` yet, so uploads fail and plots stay **Pending sync** until that endpoint exists.
+
+Field test checklist: [FIELD_TEST.md](FIELD_TEST.md).
 
 ## Run
 

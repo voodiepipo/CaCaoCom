@@ -12,6 +12,7 @@ import '../geometry/polygon_overlap.dart' show InvalidPolygonException;
 import '../main.dart';
 import '../models/plot_record.dart';
 import '../services/offline_tiles.dart';
+import 'widgets/land_area_field.dart';
 import 'widgets/status_chips.dart';
 
 /// Story 005: map a plot boundary point by point, fully offline.
@@ -101,7 +102,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
     final count = (await widget.services.repo.allPlots()).length + 1;
     if (!mounted) return;
-    final ids = await _askIds('P-${count.toString().padLeft(3, '0')}', 'F-${count.toString().padLeft(3, '0')}');
+    final ids = await _askIds('P-${count.toString().padLeft(3, '0')}', 'F-${count.toString().padLeft(3, '0')}', area);
     if (ids == null) return;
 
     final now = DateTime.now().toUtc();
@@ -114,6 +115,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
       createdAt: now,
       points: List.of(_points),
       areaHa: area,
+      landAreaHa: ids.$3,
       checkStatus: check.status,
       overlapPct: check.overlapPct,
       thresholdPct: check.thresholdPct,
@@ -129,7 +131,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Wrap(spacing: 6, children: [syncChip(plot.syncStatus), checkChip(plot.checkStatus)]),
           const SizedBox(height: 8),
-          Text('Area: ${area.toStringAsFixed(2)} ha'),
+          Text('Mapped area: ${area.toStringAsFixed(2)} ha'),
+          Text('Land area: ${plot.effectiveLandAreaHa.toStringAsFixed(2)} ha'),
           Text(check.reason),
         ]),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
@@ -138,21 +141,31 @@ class _CaptureScreenState extends State<CaptureScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  Future<(String, String)?> _askIds(String plotCode, String farmerId) {
+  /// Plot form: IDs plus the land area, which starts at the mapped area.
+  Future<(String, String, double)?> _askIds(String plotCode, String farmerId, double mappedAreaHa) {
     final plotCtl = TextEditingController(text: plotCode);
     final farmerCtl = TextEditingController(text: farmerId);
-    return showDialog<(String, String)>(
+    final areaCtl = TextEditingController(text: mappedAreaHa.toStringAsFixed(2));
+    final formKey = GlobalKey<FormState>();
+    return showDialog<(String, String, double)>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Save plot'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: plotCtl, decoration: const InputDecoration(labelText: 'Plot ID')),
-          TextField(controller: farmerCtl, decoration: const InputDecoration(labelText: 'Farmer ID')),
-        ]),
+        content: Form(
+          key: formKey,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: plotCtl, decoration: const InputDecoration(labelText: 'Plot ID')),
+            TextField(controller: farmerCtl, decoration: const InputDecoration(labelText: 'Farmer ID')),
+            LandAreaField(controller: areaCtl, mappedAreaHa: mappedAreaHa),
+          ]),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           FilledButton(
-            onPressed: () => Navigator.pop(context, (plotCtl.text.trim(), farmerCtl.text.trim())),
+            onPressed: () {
+              if (!formKey.currentState!.validate()) return;
+              Navigator.pop(context, (plotCtl.text.trim(), farmerCtl.text.trim(), parseLandArea(areaCtl.text)!));
+            },
             child: const Text('Save'),
           ),
         ],
