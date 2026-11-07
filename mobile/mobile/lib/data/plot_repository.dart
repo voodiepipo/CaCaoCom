@@ -4,20 +4,20 @@ import '../models/plot_record.dart';
 
 /// Device storage for mapped plots (story 005). Everything is written to a
 /// local SQLite file, so capture works with no signal; records stay
-/// `pendingSync` until the sync job (story 007, sprint 2) uploads them.
+/// `pendingSync` until [SyncService] (story 007) uploads them.
 class PlotRepository {
   PlotRepository._(this._db);
 
   final Database _db;
 
-  static const _schemaVersion = 1;
+  static const _schemaVersion = 2;
 
   static Future<PlotRepository> open({DatabaseFactory? factory, String? path}) async {
     final dbFactory = factory ?? databaseFactory;
     final dbPath = path ?? '${await dbFactory.getDatabasesPath()}/cacaocom_field.db';
     final db = await dbFactory.openDatabase(
       dbPath,
-      options: OpenDatabaseOptions(version: _schemaVersion, onCreate: _create),
+      options: OpenDatabaseOptions(version: _schemaVersion, onCreate: _create, onUpgrade: _upgrade),
     );
     return PlotRepository._(db);
   }
@@ -38,7 +38,10 @@ class PlotRepository {
         overlap_pct REAL,
         threshold_pct REAL,
         check_reason TEXT,
-        checked_at TEXT
+        checked_at TEXT,
+        land_area_ha REAL,
+        revision INTEGER NOT NULL DEFAULT 0,
+        synced_at TEXT
       )''');
     await db.execute('''
       CREATE TABLE plot_events (
@@ -56,6 +59,14 @@ class PlotRepository {
     await db.execute('''
       CREATE TRIGGER plot_events_no_delete BEFORE DELETE ON plot_events
       BEGIN SELECT RAISE(ABORT, 'plot_events is append-only'); END''');
+  }
+
+  static Future<void> _upgrade(Database db, int from, int to) async {
+    if (from < 2) {
+      await db.execute('ALTER TABLE plots ADD COLUMN land_area_ha REAL');
+      await db.execute('ALTER TABLE plots ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
+      await db.execute('ALTER TABLE plots ADD COLUMN synced_at TEXT');
+    }
   }
 
   Future<void> close() => _db.close();
@@ -114,6 +125,62 @@ class PlotRepository {
       [SyncStatus.pendingSync.name],
     );
     return (rows.first['n'] as int?) ?? 0;
+  }
+
+  /// The upload queue: plots not yet on the server, oldest first.
+  Future<List<PlotRecord>> pendingPlots() async {
+    final rows = await _db.query('plots',
+        where: 'sync_status = ?', whereArgs: [SyncStatus.pendingSync.name], orderBy: 'created_at ASC');
+    return rows.map(PlotRecord.fromRow).toList();
+  }
+
+  /// Marks [uploaded] as synced, unless it was edited on the device while the
+  /// upload was in flight. Returns false in that case so it stays queued.
+  Future<bool> markSynced(PlotRecord uploaded, {DateTime? at}) async {
+    final when = (at ?? DateTime.now()).toUtc().toIso8601String();
+    return _db.transaction((txn) async {
+      final n = await txn.update(
+        'plots',
+        {'sync_status': SyncStatus.synced.name, 'synced_at': when},
+        where: 'local_id = ? AND revision = ?',
+        whereArgs: [uploaded.localId, uploaded.revision],
+      );
+      if (n == 0) return false;
+      await txn.insert('plot_events', {
+        'local_id': uploaded.localId,
+        'action': 'synced',
+        'agent_id': uploaded.agentId,
+        'at': when,
+        'detail': 'Uploaded to server',
+      });
+      return true;
+    });
+  }
+
+  /// Story 3.1: stores the agent-entered land area, queues the plot for upload
+  /// again and appends a history entry with the old and new value.
+  Future<PlotRecord> updateLandArea(PlotRecord plot, double landAreaHa, {required String agentId}) async {
+    return _db.transaction((txn) async {
+      final rows = await txn.query('plots', where: 'local_id = ?', whereArgs: [plot.localId], limit: 1);
+      if (rows.isEmpty) throw StateError('Plot ${plot.localId} is not on this device');
+      final before = PlotRecord.fromRow(rows.first);
+      await txn.rawUpdate(
+        'UPDATE plots SET land_area_ha = ?, revision = revision + 1, sync_status = ? WHERE local_id = ?',
+        [landAreaHa, SyncStatus.pendingSync.name, plot.localId],
+      );
+      await txn.insert('plot_events', {
+        'local_id': plot.localId,
+        'action': 'land_area_updated',
+        'agent_id': agentId,
+        'at': DateTime.now().toUtc().toIso8601String(),
+        'detail': '${before.effectiveLandAreaHa.toStringAsFixed(2)} ha → ${landAreaHa.toStringAsFixed(2)} ha',
+      });
+      return before.copyWith(
+        landAreaHa: landAreaHa,
+        revision: before.revision + 1,
+        syncStatus: SyncStatus.pendingSync,
+      );
+    });
   }
 
   Future<List<PlotEvent>> eventsFor(String localId) async {
